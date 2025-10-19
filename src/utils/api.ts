@@ -40,6 +40,34 @@ const pointsCache = new Map<string, number>();
 const pendingImageRequests = new Map<string, Promise<string>>();
 
 /**
+ * Remove duplicate NFTs and keep only the lowest price for each tokenId
+ */
+function removeDuplicateNFTs(listings: NFTWithMetadata[]): NFTWithMetadata[] {
+  const nftMap = new Map<string, NFTWithMetadata>();
+  
+  listings.forEach(listing => {
+    const tokenId = listing.tokenId;
+    if (!tokenId) return;
+    
+    const currentPrice = getPriceValue(listing);
+    const existing = nftMap.get(tokenId);
+    
+    if (!existing) {
+      // First time seeing this NFT
+      nftMap.set(tokenId, listing);
+    } else {
+      // Compare prices and keep the lower one
+      const existingPrice = getPriceValue(existing);
+      if (currentPrice < existingPrice) {
+        nftMap.set(tokenId, listing);
+      }
+    }
+  });
+  
+  return Array.from(nftMap.values());
+}
+
+/**
  * Fetch NFT listings from OpenSea via Edge Function
  */
 export async function fetchNFTListings(nftType: NFTType): Promise<NFTWithMetadata[]> {
@@ -57,10 +85,10 @@ export async function fetchNFTListings(nftType: NFTType): Promise<NFTWithMetadat
       throw new Error(error.message || 'Failed to fetch NFT listings');
     }
     
-    const listings = (data?.listings || []) as NFTWithMetadata[];
+    const allListings = (data?.listings || []) as NFTWithMetadata[];
     
-    // Add NFT type to each listing
-    listings.forEach(listing => {
+    // Add NFT type and tokenId to each listing
+    allListings.forEach(listing => {
       listing.nftType = nftType;
       const tokenId = getTokenId(listing);
       if (tokenId) {
@@ -68,8 +96,11 @@ export async function fetchNFTListings(nftType: NFTType): Promise<NFTWithMetadat
       }
     });
     
-    console.log(`Fetched ${listings.length} listings for ${nftType}`);
-    return listings;
+    // Remove duplicates - keep only lowest price for each NFT
+    const uniqueListings = removeDuplicateNFTs(allListings);
+    
+    console.log(`Fetched ${allListings.length} total listings, ${uniqueListings.length} unique NFTs for ${nftType}`);
+    return uniqueListings;
   } catch (error) {
     console.error('Error fetching NFT listings:', error);
     throw error;
