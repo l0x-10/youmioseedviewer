@@ -51,11 +51,17 @@ export default function Index() {
     setError(null);
 
     try {
+      console.log(`\n🔄 Starting to load ${nftType} Seed NFTs...`);
+      
       // Fetch listings
       const fetchedListings = await fetchNFTListings(nftType);
       setListings(fetchedListings);
 
+      console.log(`\n📥 Fetched ${fetchedListings.length} unique NFTs`);
+      console.log(`ℹ️  Check OpenSea to verify count: https://opensea.io/collection/${nftType === 'Mythic' ? 'mythicseed' : 'ancientseed'}`);
+
       // Fetch staking points for all NFTs in parallel
+      console.log('\n⭐ Fetching staking points...');
       await Promise.all(
         fetchedListings.map(async (listing) => {
           if (listing.tokenId) {
@@ -68,12 +74,15 @@ export default function Index() {
       // Update state to trigger re-render with points
       setListings([...fetchedListings]);
       
+      console.log(`✅ Successfully loaded ${fetchedListings.length} NFTs with staking points\n`);
+      
       toast.success('NFTs loaded successfully!', {
-        description: `Found ${fetchedListings.length} ${nftType} Seed NFTs`,
+        description: `Found ${fetchedListings.length} unique ${nftType} Seed NFTs`,
       });
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to load NFTs';
       setError(errorMessage);
+      console.error('❌ Error loading NFTs:', errorMessage);
       toast.error('Error loading NFTs', {
         description: errorMessage,
       });

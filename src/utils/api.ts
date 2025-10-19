@@ -44,6 +44,7 @@ const pendingImageRequests = new Map<string, Promise<string>>();
  */
 function removeDuplicateNFTs(listings: NFTWithMetadata[]): NFTWithMetadata[] {
   const nftMap = new Map<string, NFTWithMetadata>();
+  const duplicates: { tokenId: string; oldPrice: number; newPrice: number }[] = [];
   
   listings.forEach(listing => {
     const tokenId = listing.tokenId;
@@ -56,15 +57,37 @@ function removeDuplicateNFTs(listings: NFTWithMetadata[]): NFTWithMetadata[] {
       // First time seeing this NFT
       nftMap.set(tokenId, listing);
     } else {
-      // Compare prices and keep the lower one
+      // Found duplicate - compare prices and keep the lower one
       const existingPrice = getPriceValue(existing);
       if (currentPrice < existingPrice) {
+        duplicates.push({ 
+          tokenId, 
+          oldPrice: existingPrice, 
+          newPrice: currentPrice 
+        });
         nftMap.set(tokenId, listing);
+      } else {
+        duplicates.push({ 
+          tokenId, 
+          oldPrice: currentPrice, 
+          newPrice: existingPrice 
+        });
       }
     }
   });
   
-  return Array.from(nftMap.values());
+  // Log detailed duplicate information
+  if (duplicates.length > 0) {
+    console.log(`🔍 Found ${duplicates.length} duplicate NFTs (keeping lowest price for each):`);
+    duplicates.forEach(({ tokenId, oldPrice, newPrice }) => {
+      console.log(`  - NFT #${tokenId}: Removed ${oldPrice.toFixed(4)} ETH, Kept ${newPrice.toFixed(4)} ETH`);
+    });
+  }
+  
+  const uniqueNFTs = Array.from(nftMap.values());
+  console.log(`📊 Summary: ${listings.length} total listings → ${uniqueNFTs.length} unique NFTs (removed ${listings.length - uniqueNFTs.length} duplicates)`);
+  
+  return uniqueNFTs;
 }
 
 /**
