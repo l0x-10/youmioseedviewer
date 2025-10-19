@@ -76,9 +76,7 @@ export default function Index() {
       
       console.log(`✅ Successfully loaded ${fetchedListings.length} NFTs with staking points\n`);
       
-      toast.success('NFTs loaded successfully!', {
-        description: `Found ${fetchedListings.length} unique ${nftType} Seed NFTs`,
-      });
+      toast.success('NFTs loaded successfully!');
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to load NFTs';
       setError(errorMessage);
