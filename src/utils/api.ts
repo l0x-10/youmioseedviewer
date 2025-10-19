@@ -122,7 +122,7 @@ export function getPriceValue(listing: OpenSeaListing): number {
 }
 
 /**
- * Get image URL for NFT
+ * Get image URL for NFT via Edge Function
  */
 export async function getImageUrl(listing: OpenSeaListing): Promise<string> {
   const tokenId = getTokenId(listing);
@@ -145,10 +145,38 @@ export async function getImageUrl(listing: OpenSeaListing): Promise<string> {
     return cachedUrl;
   }
   
-  // For now, use placeholder - image fetching can be added later if needed
-  const placeholder = getPlaceholderImage(`NFT #${tokenId}`);
-  imageCache.set(tokenId, placeholder);
-  return placeholder;
+  // Fetch from Edge Function
+  const contractAddress = listing.protocol_data?.parameters?.offer?.[0]?.token;
+  if (!contractAddress) {
+    const placeholder = getPlaceholderImage('No Contract');
+    imageCache.set(tokenId, placeholder);
+    return placeholder;
+  }
+  
+  const promise = (async () => {
+    try {
+      const { data, error } = await supabase.functions.invoke('opensea-nft-image', {
+        body: { contractAddress, tokenId },
+      });
+      
+      if (!error && data?.imageUrl) {
+        imageCache.set(tokenId, data.imageUrl);
+        pendingImageRequests.delete(tokenId);
+        return data.imageUrl;
+      }
+    } catch (error) {
+      console.warn(`Failed to fetch image for token ${tokenId}:`, error);
+    }
+    
+    // Fallback to placeholder
+    const placeholder = getPlaceholderImage(`NFT #${tokenId}`);
+    imageCache.set(tokenId, placeholder);
+    pendingImageRequests.delete(tokenId);
+    return placeholder;
+  })();
+  
+  pendingImageRequests.set(tokenId, promise);
+  return promise;
 }
 
 /**

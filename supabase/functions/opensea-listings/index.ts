@@ -26,38 +26,73 @@ Deno.serve(async (req) => {
       );
     }
 
-    console.log(`[OpenSea] Fetching listings for: ${collectionSlug}`);
+    console.log(`[OpenSea] Fetching ALL listings for: ${collectionSlug}`);
     
-    const url = `${OPENSEA_API_BASE}/listings/collection/${collectionSlug}/all`;
-    const response = await fetch(url, {
-      headers: {
-        'Accept': 'application/json',
-        'X-API-KEY': API_KEY,
-      },
-    });
-
-    if (!response.ok) {
-      console.error(`[OpenSea] API error: ${response.status}`);
-      const errorText = await response.text();
-      console.error(`[OpenSea] Error details:`, errorText);
+    let allListings: any[] = [];
+    let nextCursor: string | null = null;
+    let pageCount = 0;
+    const maxPages = 20; // Safety limit to avoid infinite loops
+    
+    // Fetch all pages
+    do {
+      pageCount++;
+      console.log(`[OpenSea] Fetching page ${pageCount}${nextCursor ? ` (cursor: ${nextCursor.substring(0, 20)}...)` : ''}`);
       
-      return new Response(
-        JSON.stringify({ 
-          error: `OpenSea API error: ${response.status}`,
-          details: errorText
-        }),
-        { 
-          status: response.status, 
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
-        }
-      );
-    }
+      const url: string = nextCursor 
+        ? `${OPENSEA_API_BASE}/listings/collection/${collectionSlug}/all?next=${nextCursor}`
+        : `${OPENSEA_API_BASE}/listings/collection/${collectionSlug}/all`;
+      
+      const response: Response = await fetch(url, {
+        headers: {
+          'Accept': 'application/json',
+          'X-API-KEY': API_KEY,
+        },
+      });
 
-    const data = await response.json();
-    console.log(`[OpenSea] Found ${data.listings?.length || 0} listings`);
+      if (!response.ok) {
+        console.error(`[OpenSea] API error on page ${pageCount}: ${response.status}`);
+        const errorText = await response.text();
+        console.error(`[OpenSea] Error details:`, errorText);
+        
+        // If we already have some listings, return them
+        if (allListings.length > 0) {
+          console.log(`[OpenSea] Returning ${allListings.length} listings collected before error`);
+          break;
+        }
+        
+        return new Response(
+          JSON.stringify({ 
+            error: `OpenSea API error: ${response.status}`,
+            details: errorText
+          }),
+          { 
+            status: response.status, 
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+          }
+        );
+      }
+
+      const data: any = await response.json();
+      const pageListings = data.listings || [];
+      allListings = allListings.concat(pageListings);
+      
+      console.log(`[OpenSea] Page ${pageCount}: ${pageListings.length} listings (total: ${allListings.length})`);
+      
+      // Get next cursor for pagination
+      nextCursor = data.next || null;
+      
+      // Safety check
+      if (pageCount >= maxPages) {
+        console.log(`[OpenSea] Reached max pages limit (${maxPages})`);
+        break;
+      }
+      
+    } while (nextCursor);
+
+    console.log(`[OpenSea] ✅ Found total ${allListings.length} listings across ${pageCount} pages`);
 
     return new Response(
-      JSON.stringify({ listings: data.listings || [] }),
+      JSON.stringify({ listings: allListings }),
       { 
         headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
       }

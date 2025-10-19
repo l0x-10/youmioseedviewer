@@ -5,3 +5,6 @@ verify_jwt = false
 
 [functions.staking-points]
 verify_jwt = false
+
+[functions.opensea-nft-image]
+verify_jwt = false
