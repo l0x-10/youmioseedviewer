@@ -153,14 +153,12 @@ export default function Index() {
       <footer className="fixed bottom-0 left-0 right-0 bg-card/95 backdrop-blur-sm border-t border-border py-4 px-6 shadow-lg z-40">
         <div className="container mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
           <small className="text-muted-foreground text-center sm:text-left">
-            © <a 
-              href="https://discord.com/users/1057664293065211976" 
-              target="_blank" 
-              rel="noopener noreferrer"
-              className="text-primary hover:underline font-semibold"
+            © <button
+              onClick={() => window.open('https://discord.com/users/1057664293065211976', '_blank')}
+              className="text-primary hover:underline font-semibold cursor-pointer bg-transparent border-none p-0"
             >
               @l0x_10
-            </a> All rights reserved.
+            </button> All rights reserved.
           </small>
 
           <Button
