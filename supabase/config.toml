@@ -1,0 +1,7 @@
+project_id = "sfwixplzeqooqdavdfoo"
+
+[functions.opensea-listings]
+verify_jwt = false
+
+[functions.staking-points]
+verify_jwt = false

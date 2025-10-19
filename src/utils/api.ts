@@ -1,7 +1,4 @@
-// OpenSea API configuration
-const OPENSEA_API_BASE = 'https://api.opensea.io/api/v2';
-const API_KEY = 'fdae3233ff1545ab8d5d7041e90ed89a';
-const STAKING_API_BASE = 'https://staking.youmio.ai/api';
+import { supabase } from '@/integrations/supabase/client';
 
 // Collection slugs for Youmio Seeds
 export const COLLECTION_SLUGS = {
@@ -43,29 +40,24 @@ const pointsCache = new Map<string, number>();
 const pendingImageRequests = new Map<string, Promise<string>>();
 
 /**
- * Fetch NFT listings from OpenSea
+ * Fetch NFT listings from OpenSea via Edge Function
  */
 export async function fetchNFTListings(nftType: NFTType): Promise<NFTWithMetadata[]> {
   const collectionSlug = COLLECTION_SLUGS[nftType];
-  const url = `${OPENSEA_API_BASE}/listings/collection/${collectionSlug}/all`;
   
   try {
-    const response = await fetch(url, {
-      headers: {
-        'Accept': 'application/json',
-        'X-API-KEY': API_KEY,
-      },
+    console.log(`Fetching listings for ${nftType} via Edge Function`);
+    
+    const { data, error } = await supabase.functions.invoke('opensea-listings', {
+      body: { collectionSlug },
     });
     
-    if (!response.ok) {
-      if (response.status === 401) {
-        throw new Error('Invalid API Key');
-      }
-      throw new Error(`API Error: ${response.status}`);
+    if (error) {
+      console.error('Edge Function error:', error);
+      throw new Error(error.message || 'Failed to fetch NFT listings');
     }
     
-    const data = await response.json();
-    const listings = (data.listings || []) as NFTWithMetadata[];
+    const listings = (data?.listings || []) as NFTWithMetadata[];
     
     // Add NFT type to each listing
     listings.forEach(listing => {
@@ -153,50 +145,10 @@ export async function getImageUrl(listing: OpenSeaListing): Promise<string> {
     return cachedUrl;
   }
   
-  // Fetch from API
-  const contractAddress = listing.protocol_data?.parameters?.offer?.[0]?.token;
-  if (!contractAddress) {
-    return getPlaceholderImage('No Contract');
-  }
-  
-  const promise = (async () => {
-    try {
-      const url = `${OPENSEA_API_BASE}/chain/ethereum/contract/${contractAddress}/nfts/${tokenId}`;
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 8000);
-      
-      const response = await fetch(url, {
-        headers: {
-          'Accept': 'application/json',
-          'X-API-KEY': API_KEY,
-        },
-        signal: controller.signal,
-      });
-      
-      clearTimeout(timeout);
-      
-      if (response.ok) {
-        const data = await response.json();
-        const imageUrl = data.nft?.image_url || data.nft?.display_image_url;
-        if (imageUrl) {
-          imageCache.set(tokenId, imageUrl);
-          pendingImageRequests.delete(tokenId);
-          return imageUrl;
-        }
-      }
-    } catch (error) {
-      console.warn(`Failed to fetch image for token ${tokenId}:`, error);
-    }
-    
-    // Fallback to placeholder
-    const placeholder = getPlaceholderImage(`NFT #${tokenId}`);
-    imageCache.set(tokenId, placeholder);
-    pendingImageRequests.delete(tokenId);
-    return placeholder;
-  })();
-  
-  pendingImageRequests.set(tokenId, promise);
-  return promise;
+  // For now, use placeholder - image fetching can be added later if needed
+  const placeholder = getPlaceholderImage(`NFT #${tokenId}`);
+  imageCache.set(tokenId, placeholder);
+  return placeholder;
 }
 
 /**
@@ -208,7 +160,7 @@ function getPlaceholderImage(text: string): string {
 }
 
 /**
- * Fetch staking points for NFT
+ * Fetch staking points for NFT via Edge Function
  */
 export async function fetchStakingPoints(tokenId: string, nftType: NFTType): Promise<number> {
   const cacheKey = `${nftType}_${tokenId}`;
@@ -219,22 +171,17 @@ export async function fetchStakingPoints(tokenId: string, nftType: NFTType): Pro
   }
   
   try {
-    const url = `${STAKING_API_BASE}/seeds/points?id=${tokenId}&type=${nftType}`;
-    const response = await fetch(url);
+    const { data, error } = await supabase.functions.invoke('staking-points', {
+      body: { tokenId, nftType },
+    });
     
-    if (!response.ok) {
-      // 404 means no staking data - not an error
-      if (response.status === 404) {
-        console.log(`No staking data for token ${tokenId} (${nftType})`);
-      } else {
-        console.warn(`Staking API error for token ${tokenId}: HTTP ${response.status}`);
-      }
+    if (error) {
+      console.warn(`Error fetching staking points for token ${tokenId}:`, error);
       pointsCache.set(cacheKey, 0);
       return 0;
     }
     
-    const data = await response.json();
-    const points = data.points || 0;
+    const points = data?.points || 0;
     pointsCache.set(cacheKey, points);
     return points;
   } catch (error) {
