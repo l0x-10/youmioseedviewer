@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Scroll, ArrowUp, Gift } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Scroll, ArrowUp, Gift, Trophy } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { FilterControls } from '@/components/FilterControls';
@@ -111,11 +112,19 @@ export default function Index() {
       <div className="container mx-auto px-4 py-8 pb-24">
         {/* Header */}
         <header className="bg-card rounded-xl shadow-card p-6 mb-8">
-          <div className="flex items-center justify-center gap-3 mb-6">
-            <Scroll className="w-8 h-8 text-primary" />
-            <h1 className="text-4xl font-bold text-foreground">
-              Youmio Seed Viewer
-            </h1>
+          <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center gap-3">
+              <Scroll className="w-8 h-8 text-primary" />
+              <h1 className="text-4xl font-bold text-foreground">
+                Youmio Seed Viewer
+              </h1>
+            </div>
+            <Link to="/leaderboard">
+              <Button variant="outline" className="gap-2">
+                <Trophy className="w-4 h-4" />
+                Leaderboard
+              </Button>
+            </Link>
           </div>
 
           <FilterControls
