@@ -115,10 +115,10 @@ export default function Leaderboard() {
         const listedIds = await fetchListedNFTs(collectionSlug);
         console.log(`Found ${listedIds.size} listed ${nftType} NFTs`);
 
-        // Fetch staking points for each NFT
+        // Fetch staking points for each NFT with retry logic
         setLoadingProgress(`Loading ${nftType} staking points (${nfts.length} NFTs)...`);
         
-        const batchSize = 20;
+        const batchSize = 10; // Reduced batch size to avoid overwhelming the API
         for (let i = 0; i < nfts.length; i += batchSize) {
           const batch = nfts.slice(i, i + batchSize);
           
@@ -127,7 +127,22 @@ export default function Leaderboard() {
               const tokenId = nft.identifier;
               if (!tokenId) return;
 
-              const points = await fetchStakingPoints(tokenId, nftType as NFTType);
+              // Retry logic for staking points
+              let points = 0;
+              let retries = 3;
+              while (retries > 0) {
+                try {
+                  points = await fetchStakingPoints(tokenId, nftType as NFTType);
+                  break;
+                } catch (err) {
+                  retries--;
+                  if (retries > 0) {
+                    await new Promise(resolve => setTimeout(resolve, 500)); // Wait before retry
+                  } else {
+                    console.warn(`Failed to fetch points for token ${tokenId} after retries`);
+                  }
+                }
+              }
               
               allLeaderboardNFTs.push({
                 tokenId,
@@ -140,6 +155,8 @@ export default function Leaderboard() {
             })
           );
 
+          // Small delay between batches to prevent rate limiting
+          await new Promise(resolve => setTimeout(resolve, 100));
           setLoadingProgress(`Loading ${nftType} points: ${Math.min(i + batchSize, nfts.length)}/${nfts.length}`);
         }
       }
