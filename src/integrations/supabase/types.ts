@@ -14,7 +14,72 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      leaderboard_entries: {
+        Row: {
+          collection_slug: string
+          id: string
+          image_url: string | null
+          is_listed: boolean
+          nft_type: string
+          opensea_url: string | null
+          points: number
+          token_id: string
+          updated_at: string
+        }
+        Insert: {
+          collection_slug: string
+          id?: string
+          image_url?: string | null
+          is_listed?: boolean
+          nft_type: string
+          opensea_url?: string | null
+          points?: number
+          token_id: string
+          updated_at?: string
+        }
+        Update: {
+          collection_slug?: string
+          id?: string
+          image_url?: string | null
+          is_listed?: boolean
+          nft_type?: string
+          opensea_url?: string | null
+          points?: number
+          token_id?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      leaderboard_meta: {
+        Row: {
+          cache_key: string
+          id: string
+          last_completed_at: string | null
+          last_error: string | null
+          last_started_at: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          cache_key: string
+          id?: string
+          last_completed_at?: string | null
+          last_error?: string | null
+          last_started_at?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          cache_key?: string
+          id?: string
+          last_completed_at?: string | null
+          last_error?: string | null
+          last_started_at?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
