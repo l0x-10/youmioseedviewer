@@ -11,3 +11,6 @@ verify_jwt = false
 
 [functions.opensea-collection-nfts]
 verify_jwt = false
+
+[functions.staking-points-batch]
+verify_jwt = false

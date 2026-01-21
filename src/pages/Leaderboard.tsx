@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
-import { COLLECTION_SLUGS, NFTType, fetchStakingPoints } from '@/utils/api';
+import { COLLECTION_SLUGS, NFTType } from '@/utils/api';
 
 interface LeaderboardNFT {
   tokenId: string;
@@ -115,48 +115,38 @@ export default function Leaderboard() {
         const listedIds = await fetchListedNFTs(collectionSlug);
         console.log(`Found ${listedIds.size} listed ${nftType} NFTs`);
 
-        // Fetch staking points for each NFT with retry logic
+        // Fetch staking points in batches via a single backend call (prevents 503 boot errors)
         setLoadingProgress(`Loading ${nftType} staking points (${nfts.length} NFTs)...`);
-        
-        const batchSize = 10; // Reduced batch size to avoid overwhelming the API
+
+        const batchSize = 50; // max enforced server-side
         for (let i = 0; i < nfts.length; i += batchSize) {
           const batch = nfts.slice(i, i + batchSize);
-          
-          await Promise.all(
-            batch.map(async (nft: any) => {
-              const tokenId = nft.identifier;
-              if (!tokenId) return;
+          const tokenIds = batch.map((n: any) => n.identifier).filter(Boolean);
 
-              // Retry logic for staking points
-              let points = 0;
-              let retries = 3;
-              while (retries > 0) {
-                try {
-                  points = await fetchStakingPoints(tokenId, nftType as NFTType);
-                  break;
-                } catch (err) {
-                  retries--;
-                  if (retries > 0) {
-                    await new Promise(resolve => setTimeout(resolve, 500)); // Wait before retry
-                  } else {
-                    console.warn(`Failed to fetch points for token ${tokenId} after retries`);
-                  }
-                }
-              }
-              
-              allLeaderboardNFTs.push({
-                tokenId,
-                nftType: nftType as NFTType,
-                points,
-                imageUrl: nft.image_url,
-                openseaUrl: nft.opensea_url,
-                isListed: listedIds.has(tokenId),
-              });
-            })
-          );
+          const { data: pointsData, error: pointsError } = await supabase.functions.invoke('staking-points-batch', {
+            body: { tokenIds, nftType },
+          });
 
-          // Small delay between batches to prevent rate limiting
-          await new Promise(resolve => setTimeout(resolve, 100));
+          if (pointsError) {
+            console.warn(`[Leaderboard] staking-points-batch error:`, pointsError);
+          }
+
+          const pointsById: Record<string, number> = pointsData?.pointsById || {};
+
+          for (const nft of batch) {
+            const tokenId = nft.identifier;
+            if (!tokenId) continue;
+
+            allLeaderboardNFTs.push({
+              tokenId,
+              nftType: nftType as NFTType,
+              points: Number(pointsById[tokenId] ?? 0),
+              imageUrl: nft.image_url,
+              openseaUrl: nft.opensea_url,
+              isListed: listedIds.has(tokenId),
+            });
+          }
+
           setLoadingProgress(`Loading ${nftType} points: ${Math.min(i + batchSize, nfts.length)}/${nfts.length}`);
         }
       }
