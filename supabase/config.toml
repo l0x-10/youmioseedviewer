@@ -8,3 +8,6 @@ verify_jwt = false
 
 [functions.opensea-nft-image]
 verify_jwt = false
+
+[functions.opensea-collection-nfts]
+verify_jwt = false
