@@ -1,12 +1,12 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { Trophy, Search, ArrowLeft, ExternalLink, Tag, Loader2, Crown, Medal, Award } from 'lucide-react';
+import { Trophy, Search, ArrowLeft, ExternalLink, Tag, Loader2, Crown, Medal, Award, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
-import { COLLECTION_SLUGS, NFTType } from '@/utils/api';
+import { NFTType } from '@/utils/api';
 
 interface LeaderboardNFT {
   tokenId: string;
@@ -15,37 +15,29 @@ interface LeaderboardNFT {
   imageUrl: string | null;
   openseaUrl: string | null;
   isListed: boolean;
-  listingPrice?: number;
 }
 
-const LISTED_NFTS_CACHE: Map<string, Set<string>> = new Map();
+interface CacheMeta {
+  status: string;
+  lastCompletedAt: string | null;
+}
 
 export default function Leaderboard() {
   const [allNFTs, setAllNFTs] = useState<LeaderboardNFT[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [loadingProgress, setLoadingProgress] = useState<string>('');
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [error, setError] = useState<string | null>(null);
+  const [cacheMeta, setCacheMeta] = useState<CacheMeta | null>(null);
 
   // Calculate totals
-  const totalPoints = useMemo(() => {
-    return allNFTs.reduce((sum, nft) => sum + nft.points, 0);
-  }, [allNFTs]);
-
-  const mythicPoints = useMemo(() => {
-    return allNFTs.filter(n => n.nftType === 'Mythic').reduce((sum, nft) => sum + nft.points, 0);
-  }, [allNFTs]);
-
-  const ancientPoints = useMemo(() => {
-    return allNFTs.filter(n => n.nftType === 'Ancient').reduce((sum, nft) => sum + nft.points, 0);
-  }, [allNFTs]);
+  const totalPoints = useMemo(() => allNFTs.reduce((sum, nft) => sum + nft.points, 0), [allNFTs]);
+  const mythicPoints = useMemo(() => allNFTs.filter(n => n.nftType === 'Mythic').reduce((sum, nft) => sum + nft.points, 0), [allNFTs]);
+  const ancientPoints = useMemo(() => allNFTs.filter(n => n.nftType === 'Ancient').reduce((sum, nft) => sum + nft.points, 0), [allNFTs]);
 
   // Filter and search
   const filteredNFTs = useMemo(() => {
     if (!searchQuery.trim()) return allNFTs;
-    return allNFTs.filter(nft => 
-      nft.tokenId.toLowerCase().includes(searchQuery.toLowerCase())
-    );
+    return allNFTs.filter(nft => nft.tokenId.toLowerCase().includes(searchQuery.toLowerCase()));
   }, [allNFTs, searchQuery]);
 
   // Find searched NFT position
@@ -55,119 +47,73 @@ export default function Leaderboard() {
     return exactMatch !== -1 ? exactMatch + 1 : null;
   }, [allNFTs, searchQuery]);
 
-  const fetchListedNFTs = async (collectionSlug: string): Promise<Set<string>> => {
-    if (LISTED_NFTS_CACHE.has(collectionSlug)) {
-      return LISTED_NFTS_CACHE.get(collectionSlug)!;
-    }
-
+  const loadFromCache = async () => {
+    setLoading(true);
     try {
-      const { data, error } = await supabase.functions.invoke('opensea-listings', {
-        body: { collectionSlug },
-      });
+      // Fetch cached leaderboard entries sorted by points
+      const { data: entries, error } = await supabase
+        .from('leaderboard_entries')
+        .select('*')
+        .order('points', { ascending: false });
 
       if (error) throw error;
 
-      const listings = data?.listings || [];
-      const listedIds = new Set<string>();
-      
-      listings.forEach((listing: any) => {
-        const tokenId = listing.protocol_data?.parameters?.offer?.[0]?.identifierOrCriteria;
-        if (tokenId) {
-          listedIds.add(tokenId);
-        }
-      });
+      const nfts: LeaderboardNFT[] = (entries || []).map((e: any) => ({
+        tokenId: e.token_id,
+        nftType: e.nft_type as NFTType,
+        points: Number(e.points),
+        imageUrl: e.image_url,
+        openseaUrl: e.opensea_url,
+        isListed: e.is_listed,
+      }));
 
-      LISTED_NFTS_CACHE.set(collectionSlug, listedIds);
-      return listedIds;
+      setAllNFTs(nfts);
+
+      // Fetch cache meta
+      const { data: meta } = await supabase
+        .from('leaderboard_meta')
+        .select('*')
+        .eq('cache_key', 'leaderboard_v1')
+        .maybeSingle();
+
+      if (meta) {
+        setCacheMeta({
+          status: meta.status,
+          lastCompletedAt: meta.last_completed_at,
+        });
+      }
+
+      if (nfts.length === 0) {
+        toast.info('No cached data yet. Click refresh to load leaderboard.');
+      }
     } catch (err) {
-      console.error('Error fetching listed NFTs:', err);
-      return new Set();
+      console.error('Error loading from cache:', err);
+      toast.error('Failed to load leaderboard');
+    } finally {
+      setLoading(false);
     }
   };
 
-  const loadLeaderboard = async () => {
-    setLoading(true);
-    setError(null);
-    setAllNFTs([]);
-    setLoadingProgress('Initializing...');
+  const triggerRefresh = async () => {
+    setRefreshing(true);
+    toast.info('Refreshing leaderboard data... This may take a few minutes.');
 
     try {
-      const allLeaderboardNFTs: LeaderboardNFT[] = [];
+      const { error } = await supabase.functions.invoke('leaderboard-refresh');
+      if (error) throw error;
 
-      for (const [nftType, collectionSlug] of Object.entries(COLLECTION_SLUGS)) {
-        setLoadingProgress(`Fetching ${nftType} Seeds...`);
-        
-        // Fetch all NFTs in collection
-        const { data: nftData, error: nftError } = await supabase.functions.invoke('opensea-collection-nfts', {
-          body: { collectionSlug },
-        });
-
-        if (nftError) {
-          console.error(`Error fetching ${nftType} NFTs:`, nftError);
-          continue;
-        }
-
-        const nfts = nftData?.nfts || [];
-        console.log(`Fetched ${nfts.length} ${nftType} NFTs`);
-
-        // Fetch listed NFTs for this collection
-        setLoadingProgress(`Checking ${nftType} listings...`);
-        const listedIds = await fetchListedNFTs(collectionSlug);
-        console.log(`Found ${listedIds.size} listed ${nftType} NFTs`);
-
-        // Fetch staking points in batches via a single backend call (prevents 503 boot errors)
-        setLoadingProgress(`Loading ${nftType} staking points (${nfts.length} NFTs)...`);
-
-        const batchSize = 50; // max enforced server-side
-        for (let i = 0; i < nfts.length; i += batchSize) {
-          const batch = nfts.slice(i, i + batchSize);
-          const tokenIds = batch.map((n: any) => n.identifier).filter(Boolean);
-
-          const { data: pointsData, error: pointsError } = await supabase.functions.invoke('staking-points-batch', {
-            body: { tokenIds, nftType },
-          });
-
-          if (pointsError) {
-            console.warn(`[Leaderboard] staking-points-batch error:`, pointsError);
-          }
-
-          const pointsById: Record<string, number> = pointsData?.pointsById || {};
-
-          for (const nft of batch) {
-            const tokenId = nft.identifier;
-            if (!tokenId) continue;
-
-            allLeaderboardNFTs.push({
-              tokenId,
-              nftType: nftType as NFTType,
-              points: Number(pointsById[tokenId] ?? 0),
-              imageUrl: nft.image_url,
-              openseaUrl: nft.opensea_url,
-              isListed: listedIds.has(tokenId),
-            });
-          }
-
-          setLoadingProgress(`Loading ${nftType} points: ${Math.min(i + batchSize, nfts.length)}/${nfts.length}`);
-        }
-      }
-
-      // Sort by points descending
-      allLeaderboardNFTs.sort((a, b) => b.points - a.points);
-      
-      setAllNFTs(allLeaderboardNFTs);
-      toast.success(`Loaded ${allLeaderboardNFTs.length} seeds!`);
+      toast.success('Leaderboard refreshed!');
+      await loadFromCache();
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to load leaderboard';
-      setError(errorMessage);
-      toast.error('Error loading leaderboard', { description: errorMessage });
+      console.error('Refresh error:', err);
+      toast.error('Refresh failed. Try again later.');
     } finally {
-      setLoading(false);
-      setLoadingProgress('');
+      setRefreshing(false);
     }
   };
 
   useEffect(() => {
-    loadLeaderboard();
+    loadFromCache();
   }, []);
 
   const getRankIcon = (rank: number) => {
@@ -175,6 +121,12 @@ export default function Leaderboard() {
     if (rank === 2) return <Medal className="w-5 h-5 text-gray-400" />;
     if (rank === 3) return <Award className="w-5 h-5 text-amber-600" />;
     return <span className="w-5 text-center font-mono text-muted-foreground">#{rank}</span>;
+  };
+
+  const formatLastUpdated = () => {
+    if (!cacheMeta?.lastCompletedAt) return 'Never';
+    const date = new Date(cacheMeta.lastCompletedAt);
+    return date.toLocaleString();
   };
 
   return (
@@ -189,13 +141,25 @@ export default function Leaderboard() {
                 Back to Viewer
               </Button>
             </Link>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">
+                Updated: {formatLastUpdated()}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={triggerRefresh}
+                disabled={refreshing}
+              >
+                <RefreshCw className={`w-4 h-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} />
+                {refreshing ? 'Refreshing...' : 'Refresh'}
+              </Button>
+            </div>
           </div>
 
           <div className="flex items-center justify-center gap-3 mb-6">
             <Trophy className="w-8 h-8 text-primary" />
-            <h1 className="text-4xl font-bold text-foreground">
-              Seed Leaderboard
-            </h1>
+            <h1 className="text-4xl font-bold text-foreground">Seed Leaderboard</h1>
           </div>
 
           {/* Stats Cards */}
@@ -208,16 +172,12 @@ export default function Leaderboard() {
             <div className="bg-gradient-to-br from-purple-500/20 to-purple-500/5 rounded-lg p-4 text-center">
               <p className="text-sm text-muted-foreground mb-1">Mythic Points</p>
               <p className="text-2xl font-bold text-purple-500">{mythicPoints.toLocaleString()}</p>
-              <p className="text-xs text-muted-foreground mt-1">
-                {allNFTs.filter(n => n.nftType === 'Mythic').length} seeds
-              </p>
+              <p className="text-xs text-muted-foreground mt-1">{allNFTs.filter(n => n.nftType === 'Mythic').length} seeds</p>
             </div>
             <div className="bg-gradient-to-br from-amber-500/20 to-amber-500/5 rounded-lg p-4 text-center">
               <p className="text-sm text-muted-foreground mb-1">Ancient Points</p>
               <p className="text-2xl font-bold text-amber-500">{ancientPoints.toLocaleString()}</p>
-              <p className="text-xs text-muted-foreground mt-1">
-                {allNFTs.filter(n => n.nftType === 'Ancient').length} seeds
-              </p>
+              <p className="text-xs text-muted-foreground mt-1">{allNFTs.filter(n => n.nftType === 'Ancient').length} seeds</p>
             </div>
           </div>
 
@@ -232,9 +192,7 @@ export default function Leaderboard() {
             />
             {searchedNFTPosition && (
               <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                <Badge variant="secondary" className="text-xs">
-                  Rank #{searchedNFTPosition}
-                </Badge>
+                <Badge variant="secondary" className="text-xs">Rank #{searchedNFTPosition}</Badge>
               </div>
             )}
           </div>
@@ -244,25 +202,24 @@ export default function Leaderboard() {
         {loading && (
           <div className="bg-card rounded-xl shadow-card p-12 text-center">
             <Loader2 className="w-12 h-12 text-primary animate-spin mx-auto mb-4" />
-            <p className="text-lg text-muted-foreground">{loadingProgress}</p>
-            <p className="text-sm text-muted-foreground mt-2">
-              This may take a moment as we fetch all seeds...
-            </p>
+            <p className="text-lg text-muted-foreground">Loading leaderboard...</p>
           </div>
         )}
 
-        {/* Error State */}
-        {error && !loading && (
-          <div className="bg-destructive/10 text-destructive rounded-xl p-6 text-center">
-            <p>{error}</p>
-            <Button onClick={loadLeaderboard} className="mt-4">
-              Try Again
+        {/* Empty State */}
+        {!loading && allNFTs.length === 0 && (
+          <div className="bg-card rounded-xl shadow-card p-12 text-center">
+            <Trophy className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+            <p className="text-lg text-muted-foreground mb-4">No leaderboard data yet</p>
+            <Button onClick={triggerRefresh} disabled={refreshing}>
+              <RefreshCw className={`w-4 h-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} />
+              {refreshing ? 'Loading data...' : 'Load Leaderboard'}
             </Button>
           </div>
         )}
 
         {/* Leaderboard Table */}
-        {!loading && !error && filteredNFTs.length > 0 && (
+        {!loading && filteredNFTs.length > 0 && (
           <div className="bg-card rounded-xl shadow-card overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full">
@@ -277,28 +234,22 @@ export default function Leaderboard() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {filteredNFTs.map((nft, index) => {
+                  {filteredNFTs.map((nft) => {
                     const globalRank = allNFTs.findIndex(n => n.tokenId === nft.tokenId && n.nftType === nft.nftType) + 1;
                     const isHighlighted = searchQuery.trim() && nft.tokenId.includes(searchQuery.trim());
-                    
+
                     return (
-                      <tr 
+                      <tr
                         key={`${nft.nftType}-${nft.tokenId}`}
                         className={`transition-colors hover:bg-muted/30 ${isHighlighted ? 'bg-primary/10' : ''}`}
                       >
                         <td className="px-4 py-3">
-                          <div className="flex items-center gap-2">
-                            {getRankIcon(globalRank)}
-                          </div>
+                          <div className="flex items-center gap-2">{getRankIcon(globalRank)}</div>
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-3">
                             {nft.imageUrl ? (
-                              <img 
-                                src={nft.imageUrl} 
-                                alt={`Seed #${nft.tokenId}`}
-                                className="w-10 h-10 rounded-lg object-cover"
-                              />
+                              <img src={nft.imageUrl} alt={`Seed #${nft.tokenId}`} className="w-10 h-10 rounded-lg object-cover" />
                             ) : (
                               <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center">
                                 <span className="text-xs text-muted-foreground">#{nft.tokenId}</span>
@@ -308,7 +259,7 @@ export default function Leaderboard() {
                           </div>
                         </td>
                         <td className="px-4 py-3">
-                          <Badge 
+                          <Badge
                             variant="secondary"
                             className={nft.nftType === 'Mythic' ? 'bg-purple-500/20 text-purple-600' : 'bg-amber-500/20 text-amber-600'}
                           >
@@ -325,9 +276,7 @@ export default function Leaderboard() {
                               Listed
                             </Badge>
                           ) : (
-                            <Badge variant="outline" className="bg-muted text-muted-foreground">
-                              Not Listed
-                            </Badge>
+                            <Badge variant="outline" className="bg-muted text-muted-foreground">Not Listed</Badge>
                           )}
                         </td>
                         <td className="px-4 py-3 text-center">
@@ -351,8 +300,8 @@ export default function Leaderboard() {
           </div>
         )}
 
-        {/* Empty State */}
-        {!loading && !error && filteredNFTs.length === 0 && allNFTs.length > 0 && (
+        {/* No search results */}
+        {!loading && filteredNFTs.length === 0 && allNFTs.length > 0 && (
           <div className="bg-card rounded-xl shadow-card p-12 text-center">
             <Search className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
             <p className="text-lg text-muted-foreground">No seeds found matching "{searchQuery}"</p>
